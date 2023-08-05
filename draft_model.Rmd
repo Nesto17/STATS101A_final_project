@@ -1,0 +1,282 @@
+---
+title: "Predicting Glucose Levels in Diabetes Patients"
+author: "STATS 101A Group 35"
+date: "2023-03-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library("readr")
+library("tidyr")
+library("dplyr")
+library("car")
+library("leaps")
+library("vtable")
+library("ggplot2")
+library("gridExtra")
+```
+
+## Importing Dataset
+
+```{r}
+diabetes <- read.csv("diabetes.csv")
+```
+
+```{r}
+head(diabetes)
+```
+
+```{r}
+count_zeros <- function(x) {
+  sum(x == 0, na.rm = TRUE)
+}
+
+zero_counts <- sapply(diabetes[, 0:8], count_zeros)
+data.frame(column_names = names(zero_counts), zero_count = zero_counts)
+```
+
+```{r}
+diabetes <- diabetes %>% 
+  filter(Glucose != 0, BloodPressure != 0, Insulin != 0, BMI != 0, DiabetesPedigreeFunction != 0, Age != 0, Pregnancies != 0)
+
+attach(diabetes)
+```
+
+```{r}
+zero_counts <- sapply(diabetes[, 0:8], count_zeros)
+data.frame(column_names = names(zero_counts), zero_count = zero_counts)
+```
+
+```{r}
+plot_list <- lapply(names(diabetes), function(column) {
+  ggplot(diabetes, aes_string(x = column)) +
+    geom_density() +
+    labs(title = column,
+         x = column,
+         y = "Density") +
+    theme_minimal()
+})
+
+combined_plots <- do.call(grid.arrange, c(plot_list, ncol = 3))
+print(combined_plots)
+```
+
+## Initial Model Analysis
+
+```{r}
+model <- lm(Glucose ~ Pregnancies+Insulin+BMI+SkinThickness+BloodPressure+DiabetesPedigreeFunction+Age+Outcome)
+```
+
+#### Scatterplot and Correlation Matrices
+
+```{r}
+pairs(diabetes, cex = 0.1)
+cor(diabetes)
+```
+
+#### Summary of Each Variable
+
+```{r}
+st(diabetes)
+```
+
+
+#### Model Summary
+
+```{r}
+summary(model)
+```
+
+#### ANOVA
+
+```{r}
+anova(model)
+```
+
+#### Diagnostic Plots
+
+```{r}
+par(mfrow = c(2,2))
+plot(model)
+```
+
+#### Leverages and Outliers
+
+```{r}
+hats <- hatvalues(model)
+leverages <- hats[hats > 2 * mean(hats)]
+outliers <- hats[abs(rstandard(model)) >= 2]
+
+outliers[names(outliers) %in% names(leverages)]
+```
+
+#### Multicolinearity Validation
+
+```{r}
+vif(model)
+```
+
+#### Standardized Residual Plots
+
+```{r}
+stanRes <- rstandard(model)
+par(mfrow = c(2, 3))
+plot(Insulin, stanRes, ylab = "Standardized Residuals")
+plot(BMI, stanRes, ylab = "Standardized Residuals")
+plot(BloodPressure, stanRes, ylab = "Standardized Residuals")
+plot(DiabetesPedigreeFunction, stanRes, ylab = "Standardized Residuals")
+plot(Age, stanRes, ylab = "Standardized Residuals")
+```
+
+#### Added Variable Plots
+
+```{r}
+par(mfrow=c(2, 3))
+avPlot(model, variable = "BloodPressure", ask = F)
+avPlot(model, variable = "Insulin", ask = F)
+avPlot(model, variable = "BMI", ask = F)
+avPlot(model, variable = "DiabetesPedigreeFunction", ask = F)
+avPlot(model, variable = "Age", ask = F)
+```
+
+## Model Transformation
+
+#### Box-Cox Transformation
+
+```{r}
+summary(powerTransform(cbind(Insulin, BMI, BloodPressure, DiabetesPedigreeFunction, Age) ~ 1))
+```
+
+#### Inverse-Response Plot
+
+```{r}
+tInsulin <- log(Insulin)
+tBMI <- log(BMI)
+tBloodPressure <- BloodPressure
+tDiabetesPedigreeFunction <- log(DiabetesPedigreeFunction)
+tAge <- Age^(-2)
+
+t_model <- lm(Glucose ~ tInsulin+tBMI+tBloodPressure+tDiabetesPedigreeFunction+tAge)
+invResPlot(t_model)
+```
+
+## Transformed Model Analysis
+
+```{r}
+tGlucose <- log(Glucose)
+t_model <- lm(tGlucose ~ tInsulin+tBMI+tBloodPressure+tDiabetesPedigreeFunction+tAge)
+```
+
+#### Model Summary
+
+```{r}
+summary(t_model)
+```
+
+#### ANOVA
+
+```{r}
+anova(t_model)
+```
+
+#### Diagnostic Plots
+
+```{r}
+par(mfrow = c(2, 2))
+plot(t_model)
+```
+
+#### Leverages and Outliers
+
+```{r}
+t_hats <- hatvalues(t_model)
+t_leverages <- t_hats[hats > 2 * mean(t_hats)]
+t_outliers <- t_hats[abs(rstandard(t_model)) >= 2]
+
+t_outliers[names(t_outliers) %in% names(t_leverages)]
+```
+
+#### Multicolinearity Validation
+
+```{r}
+vif(t_model)
+```
+
+#### Standardized Residual Plots
+
+```{r}
+t_stanRes <- rstandard(t_model)
+par(mfrow = c(2, 3))
+plot(Insulin,  t_stanRes, ylab = "Standardized Residuals")
+plot(BMI,  t_stanRes, ylab = "Standardized Residuals")
+plot(BloodPressure,  t_stanRes, ylab = "Standardized Residuals")
+plot(DiabetesPedigreeFunction,  t_stanRes, ylab = "Standardized Residuals")
+plot(Age,  t_stanRes, ylab = "Standardized Residuals")
+```
+
+## Variable Selection
+
+#### All Possible Subsets Method
+
+```{r}
+summary(regsubsets(as.matrix(cbind(tInsulin, tBMI, tBloodPressure, tDiabetesPedigreeFunction, tAge)), tGlucose))
+```
+
+```{r}
+om1 <- lm(tGlucose ~ tInsulin)
+om2 <- lm(tGlucose ~ tInsulin + tAge)
+om3 <- lm(tGlucose ~ tInsulin + tBloodPressure + tAge)
+om4 <- lm(tGlucose ~ tInsulin + tBloodPressure + tDiabetesPedigreeFunction  + tAge)
+om5 <- lm(tGlucose ~ tInsulin + tBMI + tBloodPressure + tDiabetesPedigreeFunction  + tAge)
+possible_models <- list(om1, om2, om3, om4, om5)
+p <- 1:5
+n <- nrow(diabetes)
+
+criterias_breakdown <- matrix(0, nrow = 5, ncol = 5)
+colnames(criterias_breakdown) <- c("Size", "Adj R2", "AIC", "AICc", "BIC")
+
+# Adjusted R-squared
+adj_R2 <- sapply(possible_models, function(mod) { summary(mod)$adj.r.squared })
+
+# AIC
+AIC <- sapply(possible_models, function(mod) { extractAIC(mod)[2] })
+
+# AICc
+AICc <- rep(0, 5)
+for (i in p) {
+  AICc[i] <- AIC[i] + ((2 * p[i]) * (p[i] + 2) * (p[i] + 3)) / (n - p[i] - 1)
+}
+
+# BIC
+BIC <- sapply(possible_models, function(mod) { extractAIC(mod, k = log(n))[2] })
+
+criterias_breakdown[, 1:5] <- c(p, adj_R2, AIC, AICc, BIC)
+criterias_breakdown
+```
+
+```{r}
+summary(om2)
+```
+
+```{r}
+summary(om3)
+```
+
+## Final Model
+
+```{r}
+final_mod <- lm(tGlucose ~ tInsulin + tBloodPressure + tAge)
+summary(final_mod)
+```
+
+```{r}
+detach("diabetes")
+```
+
+
+
+
